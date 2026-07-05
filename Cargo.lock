@@ -859,7 +859,7 @@ dependencies = [
 
 [[package]]
 name = "zed_php"
-version = "0.4.10"
+version = "0.4.11"
 dependencies = [
  "serde_json",
  "tree-sitter",
