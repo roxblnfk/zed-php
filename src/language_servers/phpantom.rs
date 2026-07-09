@@ -3,7 +3,7 @@ use std::fs;
 use zed_extension_api::settings::LspSettings;
 use zed_extension_api::{self as zed, LanguageServerId, Result};
 
-const REPO: &str = "AJenbo/phpantom_lsp";
+const REPO: &str = "PHPantom-dev/phpantom_lsp";
 const BINARY_NAME: &str = "phpantom_lsp";
 
 pub struct Phpantom {
