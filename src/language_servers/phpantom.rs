@@ -1,7 +1,7 @@
 use std::fs;
 
 use zed_extension_api::settings::LspSettings;
-use zed_extension_api::{self as zed, LanguageServerId, Result};
+use zed_extension_api::{self as zed, DownloadedFileType, LanguageServerId, Result};
 
 const REPO: &str = "PHPantom-dev/phpantom_lsp";
 const BINARY_NAME: &str = "phpantom_lsp";
@@ -75,10 +75,10 @@ impl Phpantom {
 
         let (platform, arch) = zed::current_platform();
 
-        let (os_str, ext) = match platform {
-            zed::Os::Mac => ("apple-darwin", "tar.gz"),
-            zed::Os::Linux => ("unknown-linux-gnu", "tar.gz"),
-            zed::Os::Windows => ("pc-windows-msvc", "zip"),
+        let (os_str, file_type) = match platform {
+            zed::Os::Mac => ("apple-darwin", DownloadedFileType::GzipTar),
+            zed::Os::Linux => ("unknown-linux-gnu", DownloadedFileType::GzipTar),
+            zed::Os::Windows => ("pc-windows-msvc", DownloadedFileType::Zip),
         };
 
         let arch_str = match arch {
@@ -87,7 +87,14 @@ impl Phpantom {
             _ => return Err(format!("unsupported architecture: {arch:?}")),
         };
 
-        let asset_name = format!("{BINARY_NAME}-{arch_str}-{os_str}.{ext}");
+        let asset_name = format!(
+            "{BINARY_NAME}-{arch_str}-{os_str}.{extension}",
+            extension = match file_type {
+                DownloadedFileType::GzipTar => "tar.gz",
+                DownloadedFileType::Zip => "zip",
+                _ => "",
+            }
+        );
         let asset = release
             .assets
             .iter()
@@ -112,12 +119,6 @@ impl Phpantom {
                 language_server_id,
                 &zed::LanguageServerInstallationStatus::Downloading,
             );
-
-            let file_type = match ext {
-                "tar.gz" => zed::DownloadedFileType::GzipTar,
-                "zip" => zed::DownloadedFileType::Zip,
-                _ => unreachable!(),
-            };
 
             zed::download_file(&asset.download_url, &version_dir, file_type)
                 .map_err(|e| format!("failed to download file: {e}"))?;
