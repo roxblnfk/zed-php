@@ -22,7 +22,7 @@
     },
     "runtimeExecutable": {
       "type": "string",
-      "description": "Absolute path to the PHP executable the adapter spawns (default: the `php` on your PATH). Set this to a real `php.exe` when `php` on the PATH is a shell shim (a `.bat`/`.cmd` cannot be launched directly)."
+      "description": "Path to the PHP executable the adapter spawns (default: `php` on your PATH)"
     },
     "runtimeArgs": {
       "type": "array",

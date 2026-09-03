@@ -12,18 +12,12 @@ pub(super) struct XDebug {
     current_version: OnceLock<String>,
 }
 
-/// Drop the double quotes that `tasks.json` adds for the "Run" shell. PHP
-/// identifiers and file paths never contain `"`, so removing every quote is
-/// safe and leaves a clean argv element for the debug adapter to spawn.
+/// `tasks.json` quotes arguments for a shell; the adapter spawns argv directly.
 fn strip_shell_quotes(arg: &str) -> String {
     arg.replace('"', "")
 }
 
-/// The PHP binary the adapter should spawn, when the scenario doesn't already
-/// pin a `runtimeExecutable`. Prefer the `PHP_BINARY` environment variable so a
-/// project can point at a real `php.exe` when `php` on the PATH is a shell shim
-/// (a `.bat`/`.cmd` the debug adapter can't spawn directly); otherwise fall back
-/// to whatever `php` resolves to on the PATH.
+/// `PHP_BINARY` lets a project point at a real `php.exe` when `php` on the PATH is a `.bat` shim.
 fn resolve_php_runtime(worktree: &zed_extension_api::Worktree) -> Option<String> {
     worktree
         .shell_env()
@@ -87,10 +81,7 @@ impl XDebug {
             tcp_connection: None,
         })
     }
-    /// Turn a runnable task (a PHPUnit/Pest/Testo command from `tasks.json`) into
-    /// an Xdebug launch scenario, so the gutter offers a "Debug" counterpart to
-    /// its "Run". Zed runs this against every task; we only claim the ones that
-    /// boil down to launching a PHP entrypoint.
+    /// Offers a "Debug" counterpart to a runnable task that launches a PHP entrypoint.
     pub(crate) fn dap_locator_create_scenario(
         &self,
         build_task: TaskTemplate,
@@ -101,9 +92,8 @@ impl XDebug {
             return None;
         }
 
-        // `php vendor/bin/testo …` launches the script in the first argument;
-        // `./vendor/bin/phpunit …` is itself the PHP entrypoint. Skip inline code
-        // like `php -r <code>`, which has no program to debug.
+        // `php script …` debugs the script; `./vendor/bin/phpunit …` is itself the
+        // entrypoint. `php -r <code>` has nothing to break in.
         let (program, args) = match build_task.command.as_str() {
             "php" => {
                 let program = build_task.args.first()?;
@@ -114,9 +104,6 @@ impl XDebug {
             }
             command => (command.to_string(), build_task.args.clone()),
         };
-        // `tasks.json` quotes values for the shell that runs "Run"
-        // (e.g. `--path="$ZED_RELATIVE_FILE"`). The debug adapter spawns the
-        // process directly (argv, no shell), so those quotes must come off.
         let program = strip_shell_quotes(&program);
         let args: Vec<String> = args.iter().map(|a| strip_shell_quotes(a)).collect();
 
@@ -204,37 +191,25 @@ impl XDebug {
         let mut configuration = Value::from_str(&task_definition.config)
             .map_err(|e| format!("Invalid JSON configuration: {e}"))?;
         if let Some(obj) = configuration.as_object_mut() {
-            // Tasks carry no `cwd`, so a locator-built scenario has `"cwd": null`;
-            // fill it with the worktree root. `entry(..).or_insert` wouldn't fire
-            // here — the key is present, just null.
+            // Locator scenarios carry `"cwd": null`, which `entry().or_insert` would keep.
             if obj.get("cwd").is_none_or(Value::is_null) {
                 obj.insert("cwd".to_string(), worktree.root_path().into());
             }
-            // A launch config with a `program` runs a PHP script (CLI debugging);
-            // one without just listens for incoming Xdebug connections (web
-            // debugging). Only the former spawns PHP, so the PHP binary and the
-            // Xdebug-enabling args belong there only — injecting them into a
-            // listener would make the adapter try to spawn `php` with no script
-            // instead of listening.
+            // Without `program` the adapter only listens for incoming connections;
+            // handing it a PHP binary would make it spawn `php` with no script instead.
             let launches_program = obj
                 .get("program")
                 .and_then(Value::as_str)
                 .is_some_and(|program| !program.is_empty());
             if launches_program {
-                // The adapter spawns PHP itself; on Windows `spawn("php")` won't find
-                // `php.exe` on the PATH, so hand it the absolute path we resolve here
-                // (honoring a `PHP_BINARY` override for shell-shim setups).
+                // On Windows `spawn("php")` doesn't find `php.exe` on the PATH.
                 if !obj.contains_key("runtimeExecutable")
                     && let Some(php) = resolve_php_runtime(worktree)
                 {
                     obj.insert("runtimeExecutable".to_string(), php.into());
                 }
-                // The adapter forwards `runtimeArgs` to PHP verbatim; it does NOT
-                // enable Xdebug on its own. Without these `-dxdebug…` overrides the
-                // launched script never connects back and breakpoints never bind.
-                // `${port}` is replaced by the adapter with the DBGp port it listens
-                // on, so it always matches. Users can override with their own
-                // `runtimeArgs`. (Xdebug must still be loaded via `zend_extension`.)
+                // The adapter doesn't enable Xdebug itself; it substitutes `${port}`
+                // with the DBGp port it listens on.
                 if !obj.contains_key("runtimeArgs") {
                     obj.insert(
                         "runtimeArgs".to_string(),
@@ -245,9 +220,7 @@ impl XDebug {
                         ]),
                     );
                 }
-                // The debug adapter spawns PHP directly (no shell), and Node refuses
-                // to launch `.bat`/`.cmd` files (CVE-2024-27980), failing with a
-                // cryptic `spawn EINVAL`. Turn that into an actionable message.
+                // Node refuses to spawn `.bat`/`.cmd` (CVE-2024-27980) with a bare `spawn EINVAL`.
                 if let Some(runtime) = obj.get("runtimeExecutable").and_then(Value::as_str) {
                     let ext = runtime.to_ascii_lowercase();
                     if ext.ends_with(".bat") || ext.ends_with(".cmd") {
@@ -350,7 +323,6 @@ mod tests {
 
     #[test]
     fn testo_command_launches_the_script_after_php() {
-        // `php vendor/bin/testo …` → program is the script, php drops out.
         let config = scenario_config(task(
             "php",
             &["vendor/bin/testo", "--path=tests/Foo.php", "--filter=bar"],
@@ -365,7 +337,6 @@ mod tests {
 
     #[test]
     fn phpunit_binary_is_itself_the_program() {
-        // `./vendor/bin/phpunit …` is already a PHP entrypoint; args pass through.
         let config = scenario_config(task(
             "./vendor/bin/phpunit",
             &["--filter", "bar", "tests/Foo.php"],
@@ -376,7 +347,6 @@ mod tests {
 
     #[test]
     fn shell_quotes_are_stripped_from_argv() {
-        // `tasks.json` wraps values for the shell; argv must be quote-free.
         let config = scenario_config(task(
             "php",
             &[
@@ -393,7 +363,6 @@ mod tests {
 
     #[test]
     fn inline_php_code_is_not_debuggable() {
-        // `php -r <code>` has no program to break in.
         assert!(
             XDebug::new()
                 .dap_locator_create_scenario(
